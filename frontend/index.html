@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Network Scanner Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d0d; color: #eee; font-family: monospace; padding: 24px; }
+
+  h1 { font-size: 20px; color: #00ff88; margin-bottom: 22px; letter-spacing: 2px; }
+
+  .card {
+    background: #161616; border: 1px solid #2a2a2a;
+    border-radius: 8px; padding: 18px; margin-bottom: 20px;
+  }
+  .card-title { font-size: 12px; letter-spacing: 2px; color: #00ccff; margin-bottom: 14px; }
+
+  /* connection badge */
+  .badge {
+    display: inline-block; font-size: 11px; padding: 3px 12px;
+    border-radius: 20px; margin-bottom: 14px;
+    border: 1px solid #f80; color: #f80; background: #1a1200;
+    transition: all 0.4s;
+  }
+  .badge.live { border-color: #0f0; color: #0f0; background: #001800; }
+
+  /* ── COLLISION WARNING ── */
+  .collision-box {
+    display: none;
+    background: #1a0000;
+    border: 2px solid #ff3333;
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    animation: flashRed 0.8s infinite;
+    font-size: 13px;
+    color: #ff3333;
+    letter-spacing: 1px;
+  }
+  .collision-box.show { display: flex; align-items: center; gap: 10px; }
+  @keyframes flashRed {
+    0%,100% { border-color: #ff3333; background: #1a0000; }
+    50%      { border-color: #ff6666; background: #2a0000; }
+  }
+  .collision-icon { font-size: 20px; animation: shake 0.4s infinite; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25%     { transform: translateX(-3px); }
+    75%     { transform: translateX(3px); }
+  }
+
+  /* speed numbers */
+  .speeds { display: flex; gap: 40px; margin-bottom: 14px; flex-wrap: wrap; }
+  .sp-label { font-size: 11px; color: #555; margin-bottom: 3px; }
+  .sp-val { font-size: 22px; font-weight: bold; }
+  .dl { color: #00ccff; }
+  .ul { color: #ff8800; }
+
+  /* canvas */
+  canvas {
+    display: block; width: 100%; height: 160px;
+    background: #000; border-radius: 4px; border: 1px solid #1e1e1e;
+  }
+  .legend { display: flex; gap: 20px; margin-top: 8px; font-size: 11px; color: #555; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .ldot { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  /* ── NETWORK DATA GRID ── */
+  .netdata-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .nd-box {
+    background: #0d0d0d; border: 1px solid #222;
+    border-radius: 6px; padding: 10px 12px; text-align: center;
+  }
+  .nd-label { font-size: 10px; color: #555; letter-spacing: 1px; margin-bottom: 5px; }
+  .nd-val { font-size: 17px; font-weight: bold; color: #fff; }
+  .nd-val.green { color: #00ff88; }
+  .nd-val.orange { color: #ff8800; }
+  .nd-val.red { color: #ff3333; }
+  .nd-val.cyan { color: #00ccff; }
+
+  /* ── IP TABLE ── */
+  .ip-scroll { max-height: 180px; overflow-y: auto; margin-top: 6px; }
+  .ip-scroll::-webkit-scrollbar { width: 4px; }
+  .ip-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    padding: 7px 10px; text-align: left;
+    background: #1e1e1e; color: #555;
+    font-weight: normal; border-bottom: 1px solid #2a2a2a;
+    position: sticky; top: 0;
+  }
+  td { padding: 7px 10px; border-bottom: 1px solid #1a1a1a; }
+  .ip-local  { color: #00ccff; }
+  .ip-remote { color: #ff8800; }
+  .dir-dl { color: #00ccff; font-size: 11px; }
+  .dir-ul { color: #ff8800; font-size: 11px; }
+  .empty { color: #333; text-align: center; padding: 16px; }
+
+  /* ── SCANNER ── */
+  .controls { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 11px; color: #555; }
+  .field input {
+    background: #0d0d0d; border: 1px solid #333; color: #00ccff;
+    padding: 8px 10px; font-family: monospace; font-size: 13px;
+    border-radius: 4px; width: 140px; outline: none;
+  }
+  .field input:focus { border-color: #00ccff; }
+
+  .btn {
+    padding: 9px 30px; font-size: 16px; font-family: monospace;
+    font-weight: bold; letter-spacing: 4px;
+    border: 2px solid #00ff88; background: transparent;
+    color: #00ff88; border-radius: 4px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover { background: #00ff88; color: #000; }
+  .btn.off { border-color: #ff3333; color: #ff3333; }
+  .btn.off:hover { background: #ff3333; color: #fff; }
+
+  .summary { font-size: 13px; color: #00ff88; margin-bottom: 12px; min-height: 18px; }
+
+  .scan-scroll { max-height: 260px; overflow-y: auto; }
+  .scan-scroll::-webkit-scrollbar { width: 4px; }
+  .scan-scroll::-webkit-scrollbar-thumb { background: #333; }
+
+  .scan-table td:first-child { color: #00ccff; }
+  .scan-table td:nth-child(2) { color: #00ff88; }
+  .scan-table td:nth-child(3) { color: #aaa; }
+  tr { animation: rowIn 0.3s ease; }
+  @keyframes rowIn { from { opacity:0; transform:translateX(-6px); } to { opacity:1; transform:translateX(0); } }
+
+  #statusMsg { font-size: 11px; color: #444; margin-top: 10px; }
+
+  @media(max-width: 700px) {
+    .netdata-grid { grid-template-columns: repeat(2,1fr); }
+    .speeds { gap: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>⬡ NETWORK SCANNER DASHBOARD</h1>
+
+<!-- ══════════════════════════════════════
+     TRAFFIC GRAPH
+═══════════════════════════════════════ -->
+<div class="card">
+  <div class="card-title">▶ LIVE INTERNET TRAFFIC</div>
+
+  <!-- connection status -->
+  <div class="badge" id="badge">⚡ SIMULATED — run server.py to see real data</div>
+
+  <!-- COLLISION WARNING -->
+  <div class="collision-box" id="collisionBox">
+    <span class="collision-icon">⚠</span>
+    <span id="collisionMsg">NETWORK COLLISION DETECTED — High error/drop rate!</span>
+  </div>
+
+  <!-- speed -->
+  <div class="speeds">
+    <div>
+      <div class="sp-label">↓ DOWNLOAD</div>
+      <div class="sp-val dl" id="dlVal">0.00 Kbps</div>
+    </div>
+    <div>
+      <div class="sp-label">↑ UPLOAD</div>
+      <div class="sp-val ul" id="ulVal">0.00 Kbps</div>
+    </div>
+  </div>
+
+  <!-- graph -->
+  <canvas id="graph"></canvas>
+  <div class="legend">
+    <span><span class="ldot" style="background:#00ccff"></span>Download</span>
+    <span><span class="ldot" style="background:#ff8800"></span>Upload</span>
+  </div>
+
+  <!-- NETWORK DATA -->
+  <div class="netdata-grid">
+    <div class="nd-box">
+      <div class="nd-label">PACKETS IN</div>
+      <div class="nd-val cyan" id="pktsIn">0</div>
+    </div>
+    <div class="nd-box">
+      <div class="nd-label">PACKETS OUT</div>
+      <div class="nd-val orange" id="pktsOut">0</div>
+    </div>
+    <div class="nd-box">
+      <div class="nd-label">ERRORS IN/OUT</div>
+      <div class="nd-val red" id="errors">0 / 0</div>
+    </div>
+    <div class="nd-box">
+      <div class="nd-label">DROPPED</div>
+      <div class="nd-val red" id="dropped">0</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     IP ADDRESS ACTIVITY
+═══════════════════════════════════════ -->
+<div class="card">
+  <div class="card-title">▶ IP ADDRESS ACTIVITY (UPLOAD / DOWNLOAD)</div>
+  <div class="ip-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>LOCAL IP : PORT</th>
+          <th>REMOTE IP : PORT</th>
+          <th>DIRECTION</th>
+          <th>STATUS</th>
+        </tr>
+      </thead>
+      <tbody id="ipBody">
+        <tr><td colspan="4" class="empty">Waiting for connections...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     PORT SCANNER
+═══════════════════════════════════════ -->
+<div class="card">
+  <div class="card-title">▶ PORT SCANNER</div>
+  <div class="controls">
+    <div class="field">
+      <label>TARGET IP</label>
+      <input id="host" value="127.0.0.1"/>
+    </div>
+    <div class="field">
+      <label>PORT START</label>
+      <input id="ps" type="number" value="1"/>
+    </div>
+    <div class="field">
+      <label>PORT END</label>
+      <input id="pe" type="number" value="1024"/>
+    </div>
+    <button class="btn" id="scanBtn" onclick="toggleScan()">ON</button>
+  </div>
+
+  <div class="summary" id="summary">Click ON to start scanning.</div>
+
+  <div class="scan-scroll">
+    <table class="scan-table">
+      <thead>
+        <tr><th>PORT</th><th>STATE</th><th>SERVICE</th></tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="3" class="empty">No results yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="statusMsg"></div>
+</div>
+
+<script>
+// ════════════════════════════
+//  GRAPH
+// ════════════════════════════
+const canvas = document.getElementById('graph');
+const ctx    = canvas.getContext('2d');
+const N      = 80;
+const dlArr  = new Array(N).fill(0);
+const ulArr  = new Array(N).fill(0);
+
+function resizeCanvas() {
+  canvas.width  = canvas.parentElement.clientWidth - 36;
+  canvas.height = 160;
+  draw();
+}
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle='#111'; ctx.lineWidth=1;
+  for(let i=1;i<4;i++){const y=(H/4)*i;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  for(let i=1;i<6;i++){const x=(W/6)*i;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+
+  const peak=Math.max(...dlArr,...ulArr,10);
+
+  function drawLine(data,color){
+    const grad=ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0,color+'44'); grad.addColorStop(1,color+'00');
+    ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x=(i/(N-1))*W, y=H-8-(v/peak)*(H-20);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();
+    ctx.fillStyle=grad;ctx.fill();
+
+    ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=2;
+    ctx.shadowBlur=8;ctx.shadowColor=color;
+    data.forEach((v,i)=>{
+      const x=(i/(N-1))*W, y=H-8-(v/peak)*(H-20);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();ctx.shadowBlur=0;
+
+    const lx=W-2, ly=H-8-(data[N-1]/peak)*(H-20);
+    ctx.beginPath();ctx.arc(lx,ly,4,0,Math.PI*2);
+    ctx.fillStyle=color;ctx.shadowBlur=10;ctx.shadowColor=color;
+    ctx.fill();ctx.shadowBlur=0;
+  }
+
+  drawLine(dlArr,'#00ccff');
+  drawLine(ulArr,'#ff8800');
+}
+
+function fmt(v){return v>=1024?(v/1024).toFixed(2)+' Mbps':v.toFixed(2)+' Kbps';}
+
+function push(dl,ul){
+  dlArr.push(dl);dlArr.shift();
+  ulArr.push(ul);ulArr.shift();
+  document.getElementById('dlVal').textContent=fmt(dl);
+  document.getElementById('ulVal').textContent=fmt(ul);
+  draw();
+}
+
+// ════════════════════════════
+//  SIMULATED HEARTBEAT
+// ════════════════════════════
+let simT=0, simInterval=null;
+function startSim(){
+  if(simInterval)return;
+  simInterval=setInterval(()=>{
+    simT+=0.3;
+    const dl=Math.max(0,100+70*Math.sin(simT)+40*Math.sin(simT*3.5)+Math.random()*25);
+    const ul=Math.max(0,40+25*Math.sin(simT*1.4+1)+15*Math.sin(simT*4.1)+Math.random()*12);
+    push(dl,ul);
+  },100);
+}
+function stopSim(){clearInterval(simInterval);simInterval=null;}
+
+// ════════════════════════════
+//  UPDATE NETWORK DATA
+// ════════════════════════════
+function updateNetData(d) {
+  document.getElementById('pktsIn').textContent  = d.pkts_in  || 0;
+  document.getElementById('pktsOut').textContent = d.pkts_out || 0;
+  document.getElementById('errors').textContent  = (d.errin||0) + ' / ' + (d.errout||0);
+  document.getElementById('dropped').textContent = d.dropin   || 0;
+
+  // collision warning
+  const box = document.getElementById('collisionBox');
+  if (d.collision) {
+    box.classList.add('show');
+    let msg = '⚠ NETWORK COLLISION DETECTED — ';
+    if ((d.errin||0) + (d.errout||0) > 0) msg += 'High error rate! ';
+    if ((d.dropin||0) > 0) msg += 'Packets dropping! ';
+    if (d.dl < 10 && d.ul < 10) msg += 'Network too slow!';
+    document.getElementById('collisionMsg').textContent = msg;
+  } else {
+    box.classList.remove('show');
+  }
+}
+
+// ════════════════════════════
+//  UPDATE IP TABLE
+// ════════════════════════════
+function updateIPTable(connections) {
+  const tbody = document.getElementById('ipBody');
+  if (!connections || connections.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No active connections.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  connections.forEach(c => {
+    // guess direction: higher remote port = likely download, else upload
+    const isDownload = c.remote_port > c.local_port;
+    const dirLabel = isDownload
+      ? '<span class="dir-dl">↓ DOWNLOAD</span>'
+      : '<span class="dir-ul">↑ UPLOAD</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="ip-local">${c.local_ip}:${c.local_port}</td>
+      <td class="ip-remote">${c.remote_ip}:${c.remote_port}</td>
+      <td>${dirLabel}</td>
+      <td style="color:#555;font-size:11px">${c.status}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ════════════════════════════
+//  SOCKET
+// ════════════════════════════
+let connected=false, scanning=false, openCount=0;
+
+const socket=io('http://localhost:5000',{
+  transports:['websocket'],
+  reconnectionAttempts:10,
+  reconnectionDelay:2000
+});
+
+socket.on('connect',()=>{
+  connected=true; stopSim();
+  document.getElementById('badge').textContent='● LIVE — real network data';
+  document.getElementById('badge').className='badge live';
+  document.getElementById('statusMsg').textContent='● Connected to backend.';
+});
+
+socket.on('disconnect',()=>{
+  connected=false; startSim();
+  document.getElementById('badge').textContent='⚡ SIMULATED — backend disconnected';
+  document.getElementById('badge').className='badge';
+  document.getElementById('statusMsg').textContent='○ Disconnected.';
+  document.getElementById('collisionBox').classList.remove('show');
+});
+
+socket.on('connect_error',()=>{
+  if(!connected) document.getElementById('statusMsg').textContent='✗ Backend not running — showing simulated heartbeat.';
+});
+
+socket.on('traffic_update',(d)=>{
+  if(!connected)return;
+  push(d.dl, d.ul);
+  updateNetData(d);
+  updateIPTable(d.connections);
+});
+
+// scan events
+socket.on('scan_started',(d)=>{
+  document.getElementById('summary').textContent='Scanning '+d.host+' ...';
+});
+socket.on('port_found',(d)=>{
+  openCount++;
+  document.getElementById('summary').textContent='Scanning... '+openCount+' open port(s) found so far.';
+  const tbody=document.getElementById('tbody');
+  const empty=tbody.querySelector('.empty');
+  if(empty)empty.parentElement.remove();
+  const tr=document.createElement('tr');
+  tr.innerHTML=`<td>${d.port}</td><td>OPEN</td><td>${d.service}</td>`;
+  tbody.appendChild(tr);
+});
+socket.on('scan_complete',(d)=>{
+  scanning=false;resetBtn();
+  document.getElementById('summary').textContent='✓ Done — '+d.total+' open port(s) found.';
+});
+socket.on('scan_stopped',()=>{scanning=false;resetBtn();});
+
+// ════════════════════════════
+//  SCANNER
+// ════════════════════════════
+function toggleScan(){
+  if(!connected){
+    document.getElementById('statusMsg').textContent='✗ Cannot scan — run server.py first.';
+    return;
+  }
+  scanning?stopScan():startScan();
+}
+function startScan(){
+  const host=document.getElementById('host').value.trim()||'127.0.0.1';
+  const ps=parseInt(document.getElementById('ps').value)||1;
+  const pe=parseInt(document.getElementById('pe').value)||1024;
+  document.getElementById('tbody').innerHTML='<tr><td colspan="3" class="empty">Scanning...</td></tr>';
+  openCount=0;
+  document.getElementById('summary').textContent='Starting scan...';
+  scanning=true;
+  document.getElementById('scanBtn').textContent='OFF';
+  document.getElementById('scanBtn').classList.add('off');
+  socket.emit('start_scan',{host,port_start:ps,port_end:pe});
+}
+function stopScan(){
+  socket.emit('stop_scan');scanning=false;resetBtn();
+  document.getElementById('summary').textContent='Scan stopped — '+openCount+' open port(s) found.';
+}
+function resetBtn(){
+  document.getElementById('scanBtn').textContent='ON';
+  document.getElementById('scanBtn').classList.remove('off');
+}
+
+// ════════════════════════════
+//  BOOT
+// ════════════════════════════
+window.addEventListener('resize',resizeCanvas);
+window.addEventListener('load',()=>{resizeCanvas();startSim();});
+</script>
+</body>
+</html>
